@@ -1,0 +1,152 @@
+{
+    "content": [
+        {
+            "type": "navigation",
+            "name": "Item1",
+            "content": [
+                {
+                    "type": "navigation",
+                    "name": "SubItem1",
+                    "content": [
+                        {
+                            "type": "article",
+                            "name": "Article1",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "content": "Lorem ipsum odor amet, consectetuer adipiscing elit. Sollicitudin ad neque magna litora velit velit. Inceptos faucibus maximus rutrum platea blandit. Montes metus cursus quam hendrerit maecenas ornare. Suspendisse augue nunc arcu diam purus gravida penatibus. Ut bibendum morbi erat malesuada nibh. Dapibus eget magna dignissim facilisi pretium.\n\nSodales laoreet etiam inceptos, massa hendrerit class? Senectus per felis velit platea, nec ex eros. Ultrices rhoncus aptent nam aenean libero natoque nascetur tempor tincidunt. Vestibulum morbi iaculis pharetra aliquet rhoncus habitant aptent quisque. Ridiculus neque maecenas nunc gravida integer urna mattis? Ullamcorper lacinia porttitor curabitur class tellus neque. Id nunc natoque imperdiet fermentum aenean lectus natoque faucibus. Consectetur quisque tristique laoreet purus aliquam molestie class nascetur pellentesque."
+                                },
+                                {
+                                    "type": "image",
+                                    "content": "images/pepe_frog.png",
+                                    "caption": "Article1 Image Caption"
+                                },
+                                {
+                                    "type": "video",
+                                    "content": "videos/big_buck_bunny.mp4",
+                                    "caption": "Article1 Video Caption"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "navigation",
+                    "name": "SubItem2",
+                    "content": []
+                }
+            ]
+        },
+        {
+            "type": "navigation",
+            "name": "Item2",
+            "content": [
+                {
+                    "type": "navigation",
+                    "name": "SubItem3",
+                    "content": []
+                }
+            ]
+        },
+        {
+            "type": "navigation",
+            "name": "Item3",
+            "content": [
+                {
+                    "type": "navigation",
+                    "name": "SubItem4",
+                    "content": []
+                },
+                {
+                    "type": "navigation",
+                    "name": "SubItem5",
+                    "content": []
+                },
+                {
+                    "type": "navigation",
+                    "name": "SubItem6",
+                    "content": []
+                }
+            ]
+        },
+        {
+            "type": "test",
+            "name": "Test 1",
+            "content":
+            {
+                "total_score": 100.0,
+                "questions": [
+                    {
+                        "name": "Question 1",
+                        "points": 33.0,
+                        "hint": "Question 1 Hint",
+                        "answers": [
+                            {
+                                "text": "Quest 1 Correct",
+                                "is_correct": "true"
+                            },
+                            {
+                                "text": "Quest 1 Incorrect 1",
+                                "is_correct": "false"
+                            },
+                            {
+                                "text": "Quest 1 Incorrect 2",
+                                "is_correct": "false"
+                            },
+                            {
+                                "text": "Quest 1 Incorrect 3",
+                                "is_correct": "false"
+                            }
+                        ]
+                    },
+                    {
+                        "name": "Question 2",
+                        "points": 33.0,
+                        "hint": "Question 2 Hint",
+                        "answers": [
+                            {
+                                "text": "Quest 2 Incorrect 1",
+                                "is_correct": "false"
+                            },
+                            {
+                                "text": "Quest 2 Correct",
+                                "is_correct": "true"
+                            },
+                            {
+                                "text": "Quest 2 Incorrect 2",
+                                "is_correct": "false"
+                            },
+                            {
+                                "text": "Quest 2 Incorrect 3",
+                                "is_correct": "false"
+                            }
+                        ]
+                    },
+                    {
+                        "name": "Question 3",
+                        "hint": "Question 3 Hint",
+                        "points": 34.0,
+                        "answers": [
+                            {
+                                "text": "Quest 3 Incorrect 1",
+                                "is_correct": "false"
+                            },
+                            {
+                                "text": "Quest 3 Incorrect 2",
+                                "is_correct": "false"
+                            },
+                            {
+                                "text": "Quest 3 Correct",
+                                "is_correct": "true"
+                            },
+                            {
+                                "text": "Quest 3 Incorrect 3",
+                                "is_correct": "false"
+                            }
+                        ]
+                    }
+                ]
+            } 
+        }
+    ]
+}
