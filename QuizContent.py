@@ -20,7 +20,7 @@ class Question:
         self.points = points
         self.answers = answers
 
-class TestContent:
+class QuizContent:
     def __init__(
             self,
             label: str = "",

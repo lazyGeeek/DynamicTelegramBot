@@ -70,10 +70,9 @@
             ]
         },
         {
-            "type": "test",
-            "name": "Test 1",
-            "content":
-            {
+            "type": "quiz",
+            "name": "Quiz 1",
+            "content": {
                 "total_score": 100.0,
                 "questions": [
                     {
@@ -146,7 +145,7 @@
                         ]
                     }
                 ]
-            } 
+            }
         }
     ]
 }

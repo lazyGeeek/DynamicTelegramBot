@@ -5,7 +5,7 @@ from typing import Any
 class ButtonType(Enum):
     NAVIGATION = auto()
     ARTICLE = auto()
-    TEST = auto()
+    QUIZ = auto()
 
 @dataclass
 class NavigationContent:

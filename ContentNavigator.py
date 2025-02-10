@@ -1,9 +1,10 @@
 import json
+import os
 
 from UserInfo import UserInfo
 from NavigationContent import NavigationContent, ButtonType
 from ArticleContent import ArticleContent, ArticleContentType
-from TestContent import TestContent, Question, Answer
+from QuizContent import QuizContent, Question, Answer
 
 class ContentNavigator:
     def __init__(
@@ -14,14 +15,14 @@ class ContentNavigator:
         self.content = {}
         self.navigation_filter = ""
         self.article_filter = ""
-        self.test_filter = ""
+        self.quiz_filter = ""
         self.updateContent()
 
     def updateContent(self) -> None:
         self.content = {}
         self.navigation_filter = "^("
         self.article_filter = "^("
-        self.test_filter = "^("
+        self.quiz_filter = "^("
 
         data = open(self.content_file, "r", encoding="utf8")
         content = json.load(data)["content"]
@@ -29,15 +30,15 @@ class ContentNavigator:
 
         self.content = self.getJSONContent(content)
         
-        self.navigation_filter += "Назад)$"
+        self.navigation_filter += "Back)$"
 
         if self.article_filter[-1] == '|':
             self.article_filter = self.article_filter[:-1]
         self.article_filter += ")$"
         
-        if self.test_filter[-1] == '|':
-            self.test_filter = self.test_filter[:-1]
-        self.test_filter += ")$"
+        if self.quiz_filter[-1] == '|':
+            self.quiz_filter = self.quiz_filter[:-1]
+        self.quiz_filter += ")$"
 
     def getJSONContent(self, values: list) -> dict:
         markup = {}
@@ -49,9 +50,9 @@ class ContentNavigator:
             elif elem["type"] == "article":
                 self.article_filter += elem["name"] + "|"
                 markup[elem["name"]] = NavigationContent(elem["name"], ButtonType.ARTICLE, elem["content"])
-            elif elem["type"] == "test":
-                self.test_filter += elem["name"] + "|"
-                markup[elem["name"]] = NavigationContent(elem["name"], ButtonType.TEST, elem["content"])
+            elif elem["type"] == "quiz":
+                self.quiz_filter += elem["name"] + "|"
+                markup[elem["name"]] = NavigationContent(elem["name"], ButtonType.QUIZ, elem["content"])
 
         return markup
 
@@ -59,7 +60,7 @@ class ContentNavigator:
         current_location = self.content
         
         history_size = len(user_info.history)
-        if move_to == "Назад" and history_size > 0:
+        if move_to == "Back" and history_size > 0:
             del user_info.history[history_size - 1:]
 
         for idx, elem in enumerate(user_info.history):
@@ -104,7 +105,7 @@ class ContentNavigator:
 
         return ret
 
-    def getTest(self, user_info: UserInfo, test: str) -> TestContent:
+    def getQuiz(self, user_info: UserInfo, quiz: str) -> QuizContent:
         current_location = self.content
 
         for elem in user_info.history:
@@ -113,14 +114,14 @@ class ContentNavigator:
             else:
                 return None
 
-        if test not in current_location:
+        if quiz not in current_location:
             return None
 
-        test_content = current_location[test]
+        quiz_content = current_location[quiz]
 
-        ret = TestContent(test_content.label, test_content.content["total_score"], [])
+        ret = QuizContent(quiz_content.label, quiz_content.content["total_score"], [])
 
-        for elem in test_content.content["questions"]:
+        for elem in quiz_content.content["questions"]:
             new_question = Question(elem["name"], elem["hint"], elem["points"], [])
             for answer in elem["answers"]:
                 new_question.answers.append(Answer(answer["text"], False if answer["is_correct"] == "false" else True))
@@ -128,7 +129,7 @@ class ContentNavigator:
 
         return ret
 
-    def addNavigation(self, user_info: UserInfo, new_item: str) -> None:
+    def addNavigation(self, user_info: UserInfo, new_item: str) -> bool:
         data = open(self.content_file, "r+", encoding="utf8")
         content = json.load(data)
 
@@ -145,12 +146,12 @@ class ContentNavigator:
         
         if not is_exist and len(user_info.history) > 0:
             data.close()
-            return None
+            return False
         
         for elem in current_content:
             if elem["name"] == new_item:
                 data.close()
-                return None
+                return False
 
         new_elem = {}
         new_elem["type"] = "navigation"
@@ -167,7 +168,9 @@ class ContentNavigator:
 
         self.updateContent()
 
-    def removeItem(self, user_info: UserInfo, remove_item: str) -> None:
+        return True
+
+    def removeItem(self, user_info: UserInfo, remove_item: str) -> bool:
         data = open(self.content_file, "r+", encoding="utf8")
         content = json.load(data)
 
@@ -184,10 +187,15 @@ class ContentNavigator:
         
         if not is_exist and len(user_info.history) > 0:
             data.close()
-            return None
+            return False
 
         for idx, elem in enumerate(current_content):
             if elem["name"] == remove_item:
+                if elem["type"] == "article":
+                    for elem2 in elem["content"]:
+                        if (elem2["type"] == "image" or elem2["type"] == "video") \
+                            and os.path.isfile(elem2["content"]):
+                            os.remove(elem2["content"])
                 del current_content[idx]
                 new_json = json.dumps(content, ensure_ascii=False, indent=4)
                 data.seek(0)
@@ -195,11 +203,12 @@ class ContentNavigator:
                 data.truncate()
                 data.close()
                 self.updateContent()
-                return None
+                return True
             
         data.close()
+        return False
 
-    def addArticle(self, user_info: UserInfo, new_item: str) -> None:
+    def addArticle(self, user_info: UserInfo, new_item: str) -> bool:
         data = open(self.content_file, "r+", encoding="utf8")
         content = json.load(data)
 
@@ -216,12 +225,12 @@ class ContentNavigator:
         
         if not is_exist and len(user_info.history) > 0:
             data.close()
-            return None
+            return False
 
         for elem in current_content:
             if elem["name"] == new_item:
                 data.close()
-                return None
+                return False
 
         new_elem = {}
         new_elem["type"] = "article"
@@ -238,7 +247,9 @@ class ContentNavigator:
 
         self.updateContent()
 
-    def appendArticleContent(self, user_info: UserInfo, article: str, new_content: ArticleContent) -> None:
+        return True
+
+    def appendArticleContent(self, user_info: UserInfo, article: str, new_content: ArticleContent) -> bool:
         data = open(self.content_file, "r+", encoding="utf8")
         content = json.load(data)
 
@@ -255,7 +266,7 @@ class ContentNavigator:
         
         if not is_exist and len(user_info.history) > 0:
             data.close()
-            return None
+            return False
 
         current_article_content = None
 
@@ -265,7 +276,7 @@ class ContentNavigator:
 
         if current_article_content == None:
             data.close()
-            return None
+            return False
 
         new_elem = {}
         new_elem["content"] = new_content.content
@@ -289,39 +300,9 @@ class ContentNavigator:
 
         self.updateContent()
 
-    def removeItem(self, user_info: UserInfo, remove_item: str) -> None:
-        data = open(self.content_file, "r+", encoding="utf8")
-        content = json.load(data)
+        return True
 
-        current_content = content["content"]
-    
-        is_exist = False
-        for elem in user_info.history:
-            is_exist = False
-            for value in current_content:
-                if value["name"] == elem:
-                    is_exist = True
-                    current_content = value["content"]
-                    break
-        
-        if not is_exist and len(user_info.history) > 0:
-            data.close()
-            return None
-
-        for idx, elem in enumerate(current_content):
-            if elem["name"] == remove_item:
-                del current_content[idx]
-                new_json = json.dumps(content, ensure_ascii=False, indent=4)
-                data.seek(0)
-                data.write(new_json)
-                data.truncate()
-                data.close()
-                self.updateContent()
-                return None
-            
-        data.close()
-
-    def addTest(self, user_info: UserInfo, name: str, content: str) -> bool:
+    def addQuiz(self, user_info: UserInfo, name: str, content: str) -> bool:
         with open(self.content_file, "r+", encoding="utf8") as data:
             old_content = json.load(data)
 
@@ -366,9 +347,9 @@ class ContentNavigator:
                         data.close()
                         return False
 
-            new_test = { "type": "test", "name": name, "content": new_content }
+            new_quiz = { "type": "quiz", "name": name, "content": new_content }
 
-            current_content.append(new_test)
+            current_content.append(new_quiz)
 
             new_json = json.dumps(old_content, ensure_ascii=False, indent=4)
             data.seek(0)

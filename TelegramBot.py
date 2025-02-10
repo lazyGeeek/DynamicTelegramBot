@@ -1,5 +1,6 @@
 import logging
 import copy
+import os.path
 
 from enum import Enum, auto
 from random import shuffle
@@ -11,8 +12,6 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler,
     MessageHandler,
-    # PollAnswerHandler,
-    # PollHandler,
     filters
 )
 
@@ -39,8 +38,8 @@ class BotActions(Enum):
     SAVE_ARTICLE_IMAGE_CONTENT = auto()
     SAVE_ARTICLE_VIDEO_CONTENT = auto()
     ASK_QUESTION = auto()
-    ADD_TEST_CONTENT = auto()
-    SAVE_TEST = auto()
+    ADD_QUIZ_CONTENT = auto()
+    SAVE_QUIZ = auto()
     DONE_ACTION = auto()
     REMOVE_ITEM = auto()
 
@@ -49,6 +48,10 @@ class TelegramBot:
         self.users = {}
         self.navigator = ContentNavigator("bot_content.json")
 
+        self.navigation_helper = NavigationHelper(self)
+        self.article_helper = ArticleHelper(self)
+        self.quiz_helper = QuizHelper(self)
+
         self.application = Application.builder().token(token).build()
         # global conv_handler
         self.conv_handler = ConversationHandler(
@@ -56,24 +59,24 @@ class TelegramBot:
             states={
                 BotActions.MENU: [MessageHandler(filters.Regex("^Add$"), self.addItem),
                                   MessageHandler(filters.Regex("^Delete$"), self.removeItemStart)],
-                BotActions.ADD_ITEM: [MessageHandler(filters.Regex("^Navigation$"), self.addNavigation),
-                                      MessageHandler(filters.Regex("^Article$"), self.addArticle),
-                                      MessageHandler(filters.Regex("^Quiz$"), self.addTestName),
+                BotActions.ADD_ITEM: [MessageHandler(filters.Regex("^Navigation$"), self.navigation_helper.addNavigation),
+                                      MessageHandler(filters.Regex("^Article$"), self.article_helper.addArticle),
+                                      MessageHandler(filters.Regex("^Quiz$"), self.quiz_helper.addQuizName),
                                       MessageHandler(filters.Regex("^Back$"), self.updateMenu)],
-                BotActions.ADD_NAVIGATION: [MessageHandler(filters.TEXT, self.saveNavigation)],
-                BotActions.ADD_ARTICLE_NAME: [MessageHandler(filters.TEXT, self.addArticleName)],
-                BotActions.SELECT_ARTICLE_CONTENT_TYPE: [MessageHandler(filters.TEXT, self.articleSelectContentType)],
-                BotActions.ADD_ARTICLE_CONTENT: [MessageHandler(filters.Regex("^Text$"), self.addArticleTextContent),
-                                                 MessageHandler(filters.Regex("^Image$"), self.addArticleImageContent),
-                                                 MessageHandler(filters.Regex("^Video$"), self.addArticleVideoContent),
-                                                 MessageHandler(filters.Regex("^Back$"), self.updateMenu)],
-                BotActions.SAVE_ARTICLE_TEXT_CONTENT: [MessageHandler(filters.TEXT, self.saveArticleTextContent)],
-                BotActions.SAVE_ARTICLE_IMAGE_CONTENT: [MessageHandler(filters.PHOTO, self.saveArticleImageContent)],
-                BotActions.SAVE_ARTICLE_VIDEO_CONTENT: [MessageHandler(filters.VIDEO, self.saveArticleVideoContent)],
-                BotActions.ASK_QUESTION: [MessageHandler(filters.TEXT, self.askQuestion)],
-                BotActions.ADD_TEST_CONTENT: [MessageHandler(filters.TEXT, self.addTestContent)],
-                BotActions.SAVE_TEST: [MessageHandler(filters.Document.ALL, self.saveTest)],
-                BotActions.DONE_ACTION: [MessageHandler(filters.Regex("^Back$"), self.doneAction)],
+                BotActions.ADD_NAVIGATION: [MessageHandler(filters.TEXT, self.navigation_helper.saveNavigation)],
+                BotActions.ADD_ARTICLE_NAME: [MessageHandler(filters.TEXT, self.article_helper.addArticleName)],
+                BotActions.SELECT_ARTICLE_CONTENT_TYPE: [MessageHandler(filters.TEXT, self.article_helper.articleSelectContentType)],
+                BotActions.ADD_ARTICLE_CONTENT: [MessageHandler(filters.Regex("^Text$"), self.article_helper.addArticleTextContent),
+                                                 MessageHandler(filters.Regex("^Image$"), self.article_helper.addArticleImageContent),
+                                                 MessageHandler(filters.Regex("^Video$"), self.article_helper.addArticleVideoContent),
+                                                 MessageHandler(filters.Regex("^Finish$"), self.article_helper.doneAddingArticle)],
+                BotActions.SAVE_ARTICLE_TEXT_CONTENT: [MessageHandler(filters.TEXT, self.article_helper.saveArticleTextContent)],
+                BotActions.SAVE_ARTICLE_IMAGE_CONTENT: [MessageHandler(filters.PHOTO, self.article_helper.saveArticleImageContent)],
+                BotActions.SAVE_ARTICLE_VIDEO_CONTENT: [MessageHandler(filters.VIDEO, self.article_helper.saveArticleVideoContent)],
+                BotActions.ASK_QUESTION: [MessageHandler(filters.TEXT, self.quiz_helper.askQuestion)],
+                BotActions.ADD_QUIZ_CONTENT: [MessageHandler(filters.TEXT, self.quiz_helper.addQuizContent)],
+                BotActions.SAVE_QUIZ: [MessageHandler(filters.Document.ALL, self.quiz_helper.saveQuiz)],
+                BotActions.DONE_ACTION: [MessageHandler(filters.Regex("^Done$"), self.doneAction)],
                 BotActions.REMOVE_ITEM: [MessageHandler(filters.Regex("^Back$"), self.updateMenu)]
             },
             fallbacks=[CommandHandler("cancel", self.cancel)]
@@ -82,18 +85,19 @@ class TelegramBot:
         self.navigation_message_handler = MessageHandler(filters.TEXT, self.updateMenu)
         self.remove_navigation_message_handler = MessageHandler(filters.TEXT, self.removeItemFinish)
         self.remove_article_message_handler = MessageHandler(filters.TEXT, self.removeItemFinish)
-        self.article_message_handler = MessageHandler(filters.TEXT, self.printArticle)
-        self.test_message_handler = MessageHandler(filters.TEXT, self.startTest)
+        self.remove_quiz_message_handler = MessageHandler(filters.TEXT, self.removeItemFinish)
+        self.article_message_handler = MessageHandler(filters.TEXT, self.article_helper.printArticle)
+        self.quiz_message_handler = MessageHandler(filters.TEXT, self.quiz_helper.startQuiz)
 
         self.updateFilters()
 
         self.application.add_handler(self.conv_handler)
-        # self.application.add_handler(PollAnswerHandler(self.receivePollAnswer))
+        self.application.add_handler(CommandHandler("start", self.doneAction))
 
     def updateFilters(self) -> None:
         navigation_filter = self.navigator.navigation_filter
         article_filter = self.navigator.article_filter
-        test_filter = self.navigator.test_filter
+        quiz_filter = self.navigator.quiz_filter
 
         if navigation_filter != "" and navigation_filter != "^()$":
             self.navigation_message_handler = MessageHandler(filters.Regex(navigation_filter), self.updateMenu)
@@ -107,7 +111,7 @@ class TelegramBot:
                 self.conv_handler.states[BotActions.REMOVE_ITEM].remove(self.remove_navigation_message_handler)
 
         if article_filter != "" and article_filter != "^()$":
-            self.article_message_handler = MessageHandler(filters.Regex(article_filter), self.printArticle)
+            self.article_message_handler = MessageHandler(filters.Regex(article_filter), self.article_helper.printArticle)
             self.remove_article_message_handler = MessageHandler(filters.Regex(article_filter), self.removeItemFinish)
             self.conv_handler.states[BotActions.MENU].append(self.article_message_handler)
             self.conv_handler.states[BotActions.REMOVE_ITEM].append(self.remove_article_message_handler)
@@ -117,15 +121,32 @@ class TelegramBot:
             if self.remove_article_message_handler in self.conv_handler.states[BotActions.REMOVE_ITEM]:
                 self.conv_handler.states[BotActions.REMOVE_ITEM].remove(self.remove_article_message_handler)
 
-        if article_filter != "" and article_filter != "^()$":
-            self.test_message_handler = MessageHandler(filters.Regex(test_filter), self.startTest)
-            self.conv_handler.states[BotActions.MENU].append(self.test_message_handler)
+        if quiz_filter != "" and quiz_filter != "^()$":
+            self.quiz_message_handler = MessageHandler(filters.Regex(quiz_filter), self.quiz_helper.startQuiz)
+            self.remove_quiz_message_handler = MessageHandler(filters.Regex(quiz_filter), self.removeItemFinish)
+            self.conv_handler.states[BotActions.MENU].append(self.quiz_message_handler)
+            self.conv_handler.states[BotActions.REMOVE_ITEM].append(self.remove_quiz_message_handler)
         else:
-            if self.test_message_handler in self.conv_handler.states[BotActions.MENU]:
-                self.conv_handler.states[BotActions.MENU].remove(self.test_message_handler)
+            if self.quiz_message_handler in self.conv_handler.states[BotActions.MENU]:
+                self.conv_handler.states[BotActions.MENU].remove(self.quiz_message_handler)
+            if self.remove_quiz_message_handler in self.conv_handler.states[BotActions.REMOVE_ITEM]:
+                self.conv_handler.states[BotActions.REMOVE_ITEM].remove(self.remove_quiz_message_handler)
 
     def run(self) -> None:
         self.application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+    async def clearPreviousMessages(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user = update.message.from_user
+        try:
+            await update.message.delete()
+        except:
+            logger.info("Can't delete message from %s", user.first_name)
+
+        try:
+            if "message_id" in context.user_data:
+                await context.bot.delete_message(self.users[user.id].chat_id, context.user_data["message_id"])
+        except:
+            logger.info("Can't delete bot message")
 
     async def startMenu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         user = update.message.from_user
@@ -143,7 +164,6 @@ class TelegramBot:
 
         user_info = self.users[user.id]
         new_content = self.navigator.moveTo(user_info, update.message.text)
-        await update.message.delete()
         temp_list = []
         buttons_markup = [temp_list]
         
@@ -162,9 +182,8 @@ class TelegramBot:
 
         markup = ReplyKeyboardMarkup(buttons_markup, resize_keyboard=True)
 
-        if "message_id" in context.user_data:
-            await context.bot.delete_message(user_info.chat_id, context.user_data["message_id"])
-        
+        await self.clearPreviousMessages(update, context)
+
         new_message = await context.bot.send_message(user_info.chat_id, "Select value", reply_markup=markup)
         context.user_data["message_id"] = new_message.id
 
@@ -174,12 +193,7 @@ class TelegramBot:
         user = update.message.from_user
         logger.info("User %s adding item", user.first_name)
 
-        try:
-            await update.message.delete()
-            if "message_id" in context.user_data:
-                await context.bot.delete_message(self.users[user.id].chat_id, context.user_data["message_id"])
-        except:
-            logger.info("Can't delete message from %s", user.first_name)
+        await self.clearPreviousMessages(update, context)
 
         if not self.users[user.id].is_admin:
             return await self.updateMenu(update, context)
@@ -190,203 +204,16 @@ class TelegramBot:
                                        KeyboardButton("Back")]],
                                        resize_keyboard=True)
 
-        message = await update.message.reply_text("Select value", reply_markup=markup)
-        context.user_data["message_id"] = message.id
+        message = await update.message.reply_text("Select new item type", reply_markup=markup)
+        context.user_data["messages_to_remove"] = [message.id]
 
         return BotActions.ADD_ITEM
-
-    async def addNavigation(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        user = update.message.from_user
-        logger.info("User %s adding Navigation", user.first_name)
-
-        await update.message.reply_text("Enter navigation name", reply_markup=ReplyKeyboardRemove())
-        return BotActions.ADD_NAVIGATION
-
-    async def saveNavigation(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        user = update.message.from_user
-        logger.info("User %s saving Navigation", user.first_name)
-
-        self.navigator.addNavigation(self.users[user.id], update.message.text)
-        await update.message.reply_text("New navigation added", reply_markup=ReplyKeyboardRemove())
-
-        self.updateFilters()
-
-        return await self.updateMenu(update, context)
-    
-    async def addArticle(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        user = update.message.from_user
-        logger.info("User %s adding new article", user.first_name)
-
-        await update.message.reply_text("Enter new article name", reply_markup=ReplyKeyboardRemove())
-
-        return BotActions.ADD_ARTICLE_NAME
-
-    async def addArticleName(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        user = update.message.from_user
-        logger.info("User %s adding new article name", user.first_name)
-        
-        user_info = self.users[user.id]
-        self.navigator.addArticle(user_info, update.message.text)
-        user_info.last_article = update.message.text
-        self.updateFilters()
-
-        markup = ReplyKeyboardMarkup([[KeyboardButton("Text"),
-                                       KeyboardButton("Image"),
-                                       KeyboardButton("Video")]],
-                                       resize_keyboard=True)
-        
-        await update.message.reply_text("Select value", reply_markup=markup)
-
-        return BotActions.ADD_ARTICLE_CONTENT
-    
-    async def articleSelectContentType(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        user = update.message.from_user
-        logger.info("User %s selecting article type", user.first_name)
-        
-        markup = ReplyKeyboardMarkup([[KeyboardButton("Text"),
-                                       KeyboardButton("Image"),
-                                       KeyboardButton("Video"),
-                                       KeyboardButton("Back")]],
-                                       resize_keyboard=True)
-        
-        await update.message.reply_text("Select value", reply_markup=markup)
-        return BotActions.ADD_ARTICLE_CONTENT
-
-    async def addArticleTextContent(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        user = update.message.from_user
-        logger.info("User %s adding new article text", user.first_name)
-
-        await update.message.reply_text("Enter text article", reply_markup=ReplyKeyboardRemove())
-
-        return BotActions.SAVE_ARTICLE_TEXT_CONTENT
-
-    async def saveArticleTextContent(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        user = update.message.from_user
-        logger.info("User %s saving new article text", user.first_name)
-
-        new_text = ArticleContent(ArticleContentType.TEXT, update.message.text)
-        user_info = self.users[user.id]
-        self.navigator.appendArticleContent(user_info, user_info.last_article, new_text)
-        self.updateFilters()
-
-        return await self.articleSelectContentType(update, context)
-    
-    async def addArticleImageContent(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        user = update.message.from_user
-        logger.info("User %s adding new article image", user.first_name)
-
-        await update.message.reply_text("Upload image and caption", reply_markup=ReplyKeyboardRemove())
-
-        return BotActions.SAVE_ARTICLE_IMAGE_CONTENT
-    
-    async def saveArticleImageContent(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        user = update.message.from_user
-        logger.info("User %s saving new article image", user.first_name)
-
-        file_id = update.message.photo[-1].file_id
-        new_file = await context.bot.get_file(file_id)
-        file_path = f"images/{file_id}.jpg"
-
-        await new_file.download_to_drive(file_path)  # Save the image locally
-
-        new_image = ArticleContent(ArticleContentType.IMAGE, file_path, update.message.text)
-        user_info = self.users[user.id]
-        self.navigator.appendArticleContent(user_info, user_info.last_article, new_image)
-        self.updateFilters()
-
-        return await self.articleSelectContentType(update, context)
-
-    async def addArticleVideoContent(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        user = update.message.from_user
-        logger.info("User %s adding new article video", user.first_name)
-
-        await update.message.reply_text("Upload video and caption", reply_markup=ReplyKeyboardRemove())
-
-        return BotActions.SAVE_ARTICLE_VIDEO_CONTENT
-
-    async def saveArticleVideoContent(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        user = update.message.from_user
-        logger.info("User %s saving new article video", user.first_name)
-
-        file_id = update.message.video.file_id
-        new_file = await context.bot.get_file(file_id)
-        file_path = f"videos/{update.message.video.file_name}"
-
-        await new_file.download_to_drive(file_path)  # Save the image locally
-
-        new_video = ArticleContent(ArticleContentType.VIDEO, file_path, update.message.text)
-        user_info = self.users[user.id]
-        self.navigator.appendArticleContent(user_info, user_info.last_article, new_video)
-        self.updateFilters()
-
-        return await self.articleSelectContentType(update, context)
-    
-    async def addTestName(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        user = update.message.from_user
-        logger.info("User %s adding test name", user.first_name)
-
-        try:
-            await update.message.delete()
-            if "message_id" in context.user_data:
-                await context.bot.delete_message(self.users[user.id].chat_id, context.user_data["message_id"])
-        except:
-            logger.info("Can't delete message from %s", user.first_name)
-
-        context.user_data["messages_to_remove"] = []
-
-        new_message = await context.bot.send_message(self.users[user.id].chat_id, "Enter quiz name",
-                                                     reply_markup=ReplyKeyboardRemove())
-        
-        context.user_data["messages_to_remove"].append(new_message.id)
-
-        return BotActions.ADD_TEST_CONTENT
-    
-    async def addTestContent(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        user = update.message.from_user
-        logger.info("User %s adding test content", user.first_name)
-
-        context.user_data["new_test_name"] = update.message.text
-        context.user_data["messages_to_remove"].append(update.message.id)
-
-        new_message = await context.bot.send_message(self.users[user.id].chat_id, "Upload file with quiz questions",
-                                                     reply_markup=ReplyKeyboardRemove())
-        
-        context.user_data["messages_to_remove"].append(new_message.id)
-    
-        return BotActions.SAVE_TEST
-    
-    async def saveTest(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        user = update.message.from_user
-        logger.info("User %s saving test", user.first_name)
-
-        context.user_data["messages_to_remove"].append(update.message.id)
-
-        file_id = update.message.document.file_id
-        new_file = await context.bot.get_file(file_id)
-
-        byte_content = await new_file.download_as_bytearray()
-        content = byte_content.decode("utf-8")
-
-        if self.navigator.addTest(self.users[user.id], context.user_data["new_test_name"], content):
-            new_message = await context.bot.send_message(self.users[user.id].chat_id, "Quiz added successfully",
-                                                         reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Back")]], 
-                                                         resize_keyboard=True))
-            context.user_data["messages_to_remove"].append(new_message.id)
-            self.updateFilters()
-        else:
-            new_message = await context.bot.send_message(self.users[user.id].chat_id, "Error happend",
-                                                         reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Back")]], 
-                                                         resize_keyboard=True))
-            context.user_data["messages_to_remove"].append(new_message.id)
-
-        if "new_test_name" in context.user_data:
-            del context.user_data["new_test_name"]
-
-        return BotActions.DONE_ACTION
 
     async def removeItemStart(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         user = update.message.from_user
         logger.info("User %s selecting item to remove", user.first_name)
+
+        await self.clearPreviousMessages(update, context)
 
         if not self.users[user.id].is_admin:
             return await self.updateMenu(update, context)
@@ -406,57 +233,396 @@ class TelegramBot:
 
         markup = ReplyKeyboardMarkup(buttons_markup, resize_keyboard=True)
 
-        await update.message.reply_text("Select item to delete", reply_markup=markup)
+        new_message = await context.bot.send_message(self.users[user.id].chat_id, "Select item to delete", reply_markup=markup)
+
+        context.user_data["messages_to_remove"] = [new_message.id]
+
         return BotActions.REMOVE_ITEM
 
     async def removeItemFinish(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         user = update.message.from_user
         logger.info("User %s removing item", user.first_name)
 
+        context.user_data["messages_to_remove"].append(update.message.id)
+
         if not self.users[user.id].is_admin:
             return await self.updateMenu(update, context)
 
         user_info = self.users[user.id]
-        self.navigator.removeItem(user_info, update.message.text)
+        if self.navigator.removeItem(user_info, update.message.text):
+            new_message = await context.bot.send_message(self.users[user.id].chat_id, "The item is deleted",
+                                                         reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Done")]], 
+                                                         resize_keyboard=True))
+            context.user_data["messages_to_remove"].append(new_message.id)
+        else:
+            new_message = await context.bot.send_message(self.users[user.id].chat_id, "Can't delete item",
+                                                         reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Done")]], 
+                                                         resize_keyboard=True))
+            context.user_data["messages_to_remove"].append(new_message.id)
 
-        await update.message.reply_text("The item is deleted", reply_markup=ReplyKeyboardRemove())
+        return BotActions.DONE_ACTION
+    
+    async def doneAction(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.message.from_user
+        logger.info("User %s done action", user.first_name)
+        user_info = self.users[user.id]
+
+        try:
+            if "messages_to_remove" in context.user_data:
+                await context.bot.delete_messages(user_info.chat_id, context.user_data["messages_to_remove"])
+                del context.user_data["messages_to_remove"]
+        except:
+            logger.info("Can't can't clear message history from %s", user.first_name)
+
+        try:
+            if "message_id" in context.user_data:
+                await context.bot.delete_message(self.users[user.id].chat_id, context.user_data["message_id"])
+            del context.user_data["message_id"]
+        except:
+            logger.info("Can't delete message from %s", user.first_name)
+
         return await self.updateMenu(update, context)
+
+    async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.message.from_user
+        logger.info("User %s canceled the conversation.", user.first_name)
+
+        await context.bot.send_message(self.users[user.id].chat_id, "Thank you for your cooperation", reply_markup=ReplyKeyboardRemove())
+
+        if user.id in self.users:
+            del self.users[user.id]
+
+        return ConversationHandler.END
+
+class NavigationHelper:
+    def __init__(self, bot: TelegramBot) -> None:
+        self.bot = bot
+
+    async def addNavigation(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.message.from_user
+        logger.info("User %s adding Navigation", user.first_name)
+
+        new_message = await update.message.reply_text("Enter navigation name", reply_markup=ReplyKeyboardRemove())
+        context.user_data["messages_to_remove"].append(new_message.id)
+        context.user_data["messages_to_remove"].append(update.message.id)
+
+        return BotActions.ADD_NAVIGATION
+
+    async def saveNavigation(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.message.from_user
+        logger.info("User %s saving Navigation", user.first_name)
+
+        user_info = self.bot.users[user.id]
+        if self.bot.navigator.addNavigation(user_info, update.message.text):
+            new_message = await context.bot.send_message(user_info.chat_id, "Navigation added successfully", 
+                                                         reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Done")]], 
+                                                                                          resize_keyboard=True))
+            context.user_data["messages_to_remove"].append(new_message.id)
+        else:
+            new_message = await context.bot.send_message(user_info.chat_id, "Adding navigation failed", 
+                                                         reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Done")]], 
+                                                                                          resize_keyboard=True))
+            context.user_data["messages_to_remove"].append(new_message.id)
+
+        context.user_data["messages_to_remove"].append(update.message.id)
+
+        self.bot.updateFilters()
+        return BotActions.DONE_ACTION
+
+class ArticleHelper:
+    def __init__(self, bot: TelegramBot) -> None:
+        self.bot = bot
+
+    async def addArticle(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.message.from_user
+        logger.info("User %s adding new article", user.first_name)
+
+        new_message = await update.message.reply_text("Enter new article name", reply_markup=ReplyKeyboardRemove())
+        context.user_data["messages_to_remove"].append(new_message.id)
+        context.user_data["messages_to_remove"].append(update.message.id)
+
+        return BotActions.ADD_ARTICLE_NAME
+
+    async def addArticleName(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.message.from_user
+        logger.info("User %s adding new article name", user.first_name)
+
+        context.user_data["messages_to_remove"].append(update.message.id)
+        user_info = self.bot.users[user.id]
+
+        if not self.bot.navigator.addArticle(user_info, update.message.text):
+            new_message = await context.bot.send_message(self.bot.users[user.id].chat_id, "Can't add new article",
+                                                         reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Done")]],
+                                                                                          resize_keyboard=True))
+            context.user_data["messages_to_remove"].append(new_message.id)
+            return BotActions.DONE_ACTION
+        
+        user_info.last_article = update.message.text
+        self.bot.updateFilters()
+
+        markup = ReplyKeyboardMarkup([[KeyboardButton("Text"),
+                                       KeyboardButton("Image"),
+                                       KeyboardButton("Video")]],
+                                       resize_keyboard=True)
+        
+        new_message = await context.bot.send_message(self.bot.users[user.id].chat_id,
+                                                     "Select new article content type", reply_markup=markup)
+
+        context.user_data["messages_to_remove"].append(new_message.id)
+        return BotActions.ADD_ARTICLE_CONTENT
+    
+    async def articleSelectContentType(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.message.from_user
+        logger.info("User %s selecting article type", user.first_name)
+        
+        markup = ReplyKeyboardMarkup([[KeyboardButton("Text"),
+                                       KeyboardButton("Image"),
+                                       KeyboardButton("Video"),
+                                       KeyboardButton("Finish")]],
+                                       resize_keyboard=True)
+        
+        new_message = await context.bot.send_message(self.bot.users[user.id].chat_id,
+                                                     "Select new article content type", reply_markup=markup)
+        context.user_data["messages_to_remove"].append(new_message.id)
+        context.user_data["messages_to_remove"].append(update.message.id)
+
+        return BotActions.ADD_ARTICLE_CONTENT
+
+    async def addArticleTextContent(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.message.from_user
+        logger.info("User %s adding new article text", user.first_name)
+
+        new_message = await context.bot.send_message(self.bot.users[user.id].chat_id,
+                                                     "Enter article text", reply_markup=ReplyKeyboardRemove())
+        context.user_data["messages_to_remove"].append(new_message.id)
+        context.user_data["messages_to_remove"].append(update.message.id)
+
+        return BotActions.SAVE_ARTICLE_TEXT_CONTENT
+
+    async def saveArticleTextContent(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.message.from_user
+        logger.info("User %s saving new article text", user.first_name)
+
+        new_text = ArticleContent(ArticleContentType.TEXT, update.message.text)
+        user_info = self.bot.users[user.id]
+        if self.bot.navigator.appendArticleContent(user_info, user_info.last_article, new_text):
+            new_message = await context.bot.send_message(self.bot.users[user.id].chat_id, "Article text added")
+            context.user_data["messages_to_remove"].append(new_message.id)
+        else:
+            new_message = await context.bot.send_message(self.bot.users[user.id].chat_id, "Can't add article text")
+            context.user_data["messages_to_remove"].append(new_message.id)
+
+        context.user_data["messages_to_remove"].append(update.message.id)
+        self.bot.updateFilters()
+
+        return await self.articleSelectContentType(update, context)
+    
+    async def addArticleImageContent(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.message.from_user
+        logger.info("User %s adding new article image", user.first_name)
+
+        new_message = await context.bot.send_message(self.bot.users[user.id].chat_id,
+                                                     "Upload image and caption", reply_markup=ReplyKeyboardRemove())
+        
+        context.user_data["messages_to_remove"].append(new_message.id)
+        context.user_data["messages_to_remove"].append(update.message.id)
+
+        return BotActions.SAVE_ARTICLE_IMAGE_CONTENT
+    
+    async def saveArticleImageContent(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.message.from_user
+        logger.info("User %s saving new article image", user.first_name)
+
+        file_id = update.message.photo[-1].file_id
+        new_file = await context.bot.get_file(file_id)
+        file_path = f"images/{file_id}.jpg"
+
+        if not os.path.isfile(file_path):
+            await new_file.download_to_drive(file_path)
+
+        new_image = ArticleContent(ArticleContentType.IMAGE, file_path, update.message.caption)
+        user_info = self.bot.users[user.id]
+        
+        if self.bot.navigator.appendArticleContent(user_info, user_info.last_article, new_image):
+            new_message = await context.bot.send_message(self.bot.users[user.id].chat_id,
+                                                         "Image uploaded", reply_markup=ReplyKeyboardRemove())
+            context.user_data["messages_to_remove"].append(new_message.id)
+        else:
+            new_message = await context.bot.send_message(self.bot.users[user.id].chat_id,
+                                                         "Can't upload image", reply_markup=ReplyKeyboardRemove())
+            context.user_data["messages_to_remove"].append(new_message.id)
+        self.bot.updateFilters()
+
+        context.user_data["messages_to_remove"].append(update.message.id)
+
+        return await self.articleSelectContentType(update, context)
+
+    async def addArticleVideoContent(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.message.from_user
+        logger.info("User %s adding new article video", user.first_name)
+
+        new_message = await context.bot.send_message(self.bot.users[user.id].chat_id,
+                                                     "Upload video and caption", reply_markup=ReplyKeyboardRemove())
+        context.user_data["messages_to_remove"].append(new_message.id)
+        context.user_data["messages_to_remove"].append(update.message.id)
+
+        return BotActions.SAVE_ARTICLE_VIDEO_CONTENT
+
+    async def saveArticleVideoContent(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.message.from_user
+        logger.info("User %s saving new article video", user.first_name)
+
+        file_id = update.message.video.file_id
+        new_file = await context.bot.get_file(file_id)
+        file_path = f"videos/{update.message.video.file_name}"
+
+        if not os.path.isfile(file_path):
+            await new_file.download_to_drive(file_path)
+
+        new_video = ArticleContent(ArticleContentType.VIDEO, file_path, update.message.caption)
+        user_info = self.bot.users[user.id]
+
+        if self.bot.navigator.appendArticleContent(user_info, user_info.last_article, new_video):
+            new_message = await context.bot.send_message(self.bot.users[user.id].chat_id,
+                                                         "Video uploaded", reply_markup=ReplyKeyboardRemove())
+            context.user_data["messages_to_remove"].append(new_message.id)
+        else:
+            new_message = await context.bot.send_message(self.bot.users[user.id].chat_id,
+                                                         "Can't upload video", reply_markup=ReplyKeyboardRemove())
+            context.user_data["messages_to_remove"].append(new_message.id)
+        self.bot.updateFilters()
+
+        context.user_data["messages_to_remove"].append(update.message.id)
+
+        return await self.articleSelectContentType(update, context)
+    
+    async def doneAddingArticle(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.message.from_user
+        logger.info("User %s finished adding article", user.first_name)
+
+        new_message = await context.bot.send_message(self.bot.users[user.id].chat_id, "New article added",
+                                                     reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Done")]],
+                                                                                      resize_keyboard=True))
+        context.user_data["messages_to_remove"].append(new_message.id)
+        context.user_data["messages_to_remove"].append(update.message.id)
+        self.bot.updateFilters()
+
+        return BotActions.DONE_ACTION
 
     async def printArticle(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         user = update.message.from_user
+        user_info = self.bot.users[user.id]
         logger.info("User %s print article", user.first_name)
 
-        article_content = self.navigator.getArticle(self.users[user.id], update.message.text)
+        article_content = self.bot.navigator.getArticle(user_info, update.message.text)
+
+        await self.bot.clearPreviousMessages(update, context)
+
+        if len(article_content) == 0:
+            new_message = await context.bot.send_message(self.bot.users[user.id].chat_id,
+                                                         "Can't open article", reply_markup=ReplyKeyboardRemove())
+            context.user_data["messages_to_remove"] = [update.message.id, new_message.id]
+            return BotActions.DONE_ACTION
+
+        context.user_data["messages_to_remove"] = [update.message.id]
 
         for elem in article_content:
             if elem.type == ArticleContentType.TEXT:
-                await update.message.reply_html(elem.content)
+                new_message = await context.bot.send_message(user_info.chat_id, elem.content)
+                context.user_data["messages_to_remove"].append(new_message.id)
             elif elem.type == ArticleContentType.IMAGE:
                 with open(elem.content, "rb") as image:
-                    await update.message.reply_photo(image, caption=elem.caption)
+                    new_message = await context.bot.send_photo(user_info.chat_id, image, caption=elem.caption)
+                    context.user_data["messages_to_remove"].append(new_message.id)
                     image.close()
             elif elem.type == ArticleContentType.VIDEO:
                 with open(elem.content, "rb") as video:
-                    await update.message.reply_video(video, caption=elem.caption, supports_streaming=True)
+                    new_message = await context.bot.send_video(user_info.chat_id, video, caption=elem.caption, supports_streaming=True)
+                    context.user_data["messages_to_remove"].append(new_message.id)
                     video.close()
 
-        return BotActions.MENU
+        new_message = await context.bot.send_message(user_info.chat_id, "Done",
+                                                     reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Done")]], 
+                                                     resize_keyboard=True))
+        context.user_data["messages_to_remove"].append(new_message.id)
 
-    async def startTest(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        return BotActions.DONE_ACTION
+    
+class QuizHelper:
+    def __init__(self, bot: TelegramBot) -> None:
+        self.bot = bot
+
+    async def addQuizName(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         user = update.message.from_user
-        logger.info("User %s start test", user.first_name)
+        logger.info("User %s adding quiz name", user.first_name)
 
-        user_info = self.users[user.id]
+        await self.bot.clearPreviousMessages(update, context)
 
-        current_test = self.navigator.getTest(user_info, update.message.text)
-        if current_test is None:
-            return await self.updateMenu(self, update)
+        new_message = await context.bot.send_message(self.bot.users[user.id].chat_id, "Enter quiz name",
+                                                     reply_markup=ReplyKeyboardRemove())
+        
+        context.user_data["messages_to_remove"].append(new_message.id)
+
+        return BotActions.ADD_QUIZ_CONTENT
+    
+    async def addQuizContent(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.message.from_user
+        logger.info("User %s adding quiz content", user.first_name)
+
+        context.user_data["new_quiz_name"] = update.message.text
+        context.user_data["messages_to_remove"].append(update.message.id)
+
+        new_message = await context.bot.send_message(self.bot.users[user.id].chat_id, "Upload file with quiz questions",
+                                                     reply_markup=ReplyKeyboardRemove())
+        
+        context.user_data["messages_to_remove"].append(new_message.id)
+    
+        return BotActions.SAVE_QUIZ
+    
+    async def saveQuiz(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.message.from_user
+        logger.info("User %s saving quiz", user.first_name)
+
+        context.user_data["messages_to_remove"].append(update.message.id)
+
+        file_id = update.message.document.file_id
+        new_file = await context.bot.get_file(file_id)
+
+        byte_content = await new_file.download_as_bytearray()
+        content = byte_content.decode("utf-8")
+
+        if self.bot.navigator.addQuiz(self.bot.users[user.id], context.user_data["new_quiz_name"], content):
+            new_message = await context.bot.send_message(self.bot.users[user.id].chat_id, "Quiz added successfully",
+                                                         reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Done")]], 
+                                                         resize_keyboard=True))
+            context.user_data["messages_to_remove"].append(new_message.id)
+            self.bot.updateFilters()
+        else:
+            new_message = await context.bot.send_message(self.users[user.id].chat_id, "Error happend",
+                                                         reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Done")]], 
+                                                         resize_keyboard=True))
+            context.user_data["messages_to_remove"].append(new_message.id)
+
+        if "new_quiz_name" in context.user_data:
+            del context.user_data["new_quiz_name"]
+
+        return BotActions.DONE_ACTION
+    
+    async def startQuiz(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.message.from_user
+        logger.info("User %s start quiz", user.first_name)
+
+        user_info = self.bot.users[user.id]
+
+        current_quiz = self.bot.navigator.getQuiz(user_info, update.message.text)
+        if current_quiz is None:
+            return await self.bot.updateMenu(self, update)
         
         if "message_id" in context.user_data:
             await context.bot.delete_message(user_info.chat_id, context.user_data["message_id"])
 
-        context.user_data["quiz_questions"] = copy.deepcopy(current_test.questions)
-        context.user_data["total_score"] = current_test.total_score
+        context.user_data["quiz_questions"] = copy.deepcopy(current_quiz.questions)
+        context.user_data["total_score"] = current_quiz.total_score
         context.user_data["current_score"] = 0.0
         context.user_data["messages_to_remove"] = []
 
@@ -465,30 +631,30 @@ class TelegramBot:
     async def askQuestion(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         user = update.message.from_user
         logger.info("User %s asking question", user.first_name)
-        user_info = self.users[user.id]
+        user_info = self.bot.users[user.id]
 
         is_correct = False
         if "current_question" in context.user_data:
             for elem in context.user_data["current_question"].answers:
                 if elem.is_correct and elem.label == update.message.text:
                     context.user_data["current_score"] += context.user_data["current_question"].points
-                    message = await context.bot.send_message(self.users[user.id].chat_id, "Correct")
+                    message = await context.bot.send_message(user_info.chat_id, "Correct")
                     context.user_data["messages_to_remove"].append(message.id)
                     is_correct = True
                     break
 
             if not is_correct:
-                message = await context.bot.send_message(self.users[user.id].chat_id,
+                message = await context.bot.send_message(user_info.chat_id,
                                                         "Incorrect\n" + context.user_data["current_question"].hint)
                 context.user_data["messages_to_remove"].append(message.id)
 
 
         if len(context.user_data["quiz_questions"]) == 0:
-            new_message = await context.bot.send_message(self.users[user.id].chat_id,
+            new_message = await context.bot.send_message(user_info.chat_id,
                                                           "Quiz finished.\nYour score is: " +
                                                           str(context.user_data["current_score"]) + "/" +
                                                           str(context.user_data["total_score"]),
-                                                          reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Back")]], 
+                                                          reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Done")]], 
                                                           resize_keyboard=True))
             context.user_data["message_id"] = new_message.id
             context.user_data["messages_to_remove"].append(new_message.id)
@@ -521,73 +687,3 @@ class TelegramBot:
         context.user_data["current_question"] = question
 
         return BotActions.ASK_QUESTION
-    
-    async def doneAction(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        user = update.message.from_user
-        logger.info("User %s done action", user.first_name)
-        user_info = self.users[user.id]
-
-        if "messages_to_remove" in context.user_data:
-            await context.bot.delete_messages(user_info.chat_id, context.user_data["messages_to_remove"])
-            del context.user_data["messages_to_remove"]
-
-        if "message_id" in context.user_data:
-            del context.user_data["message_id"]
-
-        return await self.updateMenu(update, context)
-
-    # async def receivePollAnswer(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    #     poll_answer = update.poll_answer
-    #     user = poll_answer.user
-    #     logger.info("User %s recieve poll answer", user.first_name)
-
-    #     correct_idx = 0
-    #     for idx, elem in enumerate(context.user_data["current_question"].answers):
-    #         if elem.is_correct:
-    #             correct_idx = idx
-
-    #     if (correct_idx,) == poll_answer.option_ids:
-    #         context.user_data["current_score"] += context.user_data["current_question"].points
-
-    #     await context.bot.stop_poll(self.users[user.id].chat_id, context.user_data["poll_message_ids"][-1])
-
-    #     if len(context.user_data["quiz_questions"]) == 0:
-    #         new_message = await context.bot.send_message(self.users[user.id].chat_id,
-    #                                                       "Quiz over.\nYour score is: " + str(context.user_data["current_score"]) + "/" + str(context.user_data["total_score"]))
-    #         context.user_data["message_id"] = new_message.id
-
-    #         del context.user_data["quiz_questions"]
-    #         del context.user_data["poll_message_ids"]
-    #         del context.user_data["current_question"]
-    #         del context.user_data["current_score"]
-    #         del context.user_data["total_score"]
-    #         return None
-
-    #     question = context.user_data["quiz_questions"].pop(0)
-
-    #     answers_list = []
-    #     correct_idx = 0
-
-    #     shuffle(question.answers)
-    #     for idx, elem in enumerate(question.answers):
-    #         answers_list.append(elem.label)
-    #         if elem.is_correct:
-    #             correct_idx = idx
-
-    #     new_message = await context.bot.send_poll(self.users[user.id].chat_id, question.label, answers_list, type=Poll.QUIZ,
-    #                                               correct_option_id=correct_idx, explanation=question.hint,
-    #                                               is_anonymous=False)
-
-    #     context.user_data["poll_message_ids"].append(new_message.id)
-    #     context.user_data["current_question"] = question
-
-    async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        user = update.message.from_user
-        logger.info("User %s canceled the conversation.", user.first_name)
-
-        await update.message.reply_text("Thank you for your cooperation", reply_markup=ReplyKeyboardRemove())
-
-        if user.id in self.users:
-            del self.users[user.id]
-
-        return ConversationHandler.END
