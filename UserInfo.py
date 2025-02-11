@@ -11,6 +11,6 @@ class UserInfo:
         self.first_name = first_name
         self.user_id = user_id
         self.chat_id = chat_id
-        self.is_admin = True
+        self.is_admin = False
         self.history = []
         self.last_article = ""

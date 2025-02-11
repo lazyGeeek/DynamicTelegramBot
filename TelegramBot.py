@@ -1,5 +1,6 @@
-import logging
 import copy
+import hashlib
+import logging
 import os.path
 
 from enum import Enum, auto
@@ -42,6 +43,9 @@ class BotActions(Enum):
     SAVE_QUIZ = auto()
     DONE_ACTION = auto()
     REMOVE_ITEM = auto()
+    CHECK_PASSWORD = auto()
+
+ADMIN_HASH = ""
 
 class TelegramBot:
     def __init__(self, token: str ) -> None:
@@ -58,7 +62,9 @@ class TelegramBot:
             entry_points=[CommandHandler("start", self.startMenu)],
             states={
                 BotActions.MENU: [MessageHandler(filters.Regex("^Add$"), self.addItem),
-                                  MessageHandler(filters.Regex("^Delete$"), self.removeItemStart)],
+                                  MessageHandler(filters.Regex("^Delete$"), self.removeItemStart),
+                                  CommandHandler("admin", self.authorize),
+                                  CommandHandler("exit", self.exit)],
                 BotActions.ADD_ITEM: [MessageHandler(filters.Regex("^Navigation$"), self.navigation_helper.addNavigation),
                                       MessageHandler(filters.Regex("^Article$"), self.article_helper.addArticle),
                                       MessageHandler(filters.Regex("^Quiz$"), self.quiz_helper.addQuizName),
@@ -77,7 +83,8 @@ class TelegramBot:
                 BotActions.ADD_QUIZ_CONTENT: [MessageHandler(filters.TEXT, self.quiz_helper.addQuizContent)],
                 BotActions.SAVE_QUIZ: [MessageHandler(filters.Document.ALL, self.quiz_helper.saveQuiz)],
                 BotActions.DONE_ACTION: [MessageHandler(filters.Regex("^Done$"), self.doneAction)],
-                BotActions.REMOVE_ITEM: [MessageHandler(filters.Regex("^Back$"), self.updateMenu)]
+                BotActions.REMOVE_ITEM: [MessageHandler(filters.Regex("^Back$"), self.updateMenu)],
+                BotActions.CHECK_PASSWORD: [MessageHandler(filters.TEXT, self.checkPassword)]
             },
             fallbacks=[CommandHandler("cancel", self.cancel)]
         )
@@ -280,6 +287,62 @@ class TelegramBot:
             del context.user_data["message_id"]
         except:
             logger.info("Can't delete message from %s", user.first_name)
+
+        return await self.updateMenu(update, context)
+
+    async def authorize(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.message.from_user
+        logger.info("User %s authorizing", user.first_name)
+
+        if user.id not in self.users:
+            return await self.updateMenu(update, context)
+
+        new_message = await context.bot.send_message(self.users[user.id].chat_id, "Enter password for admin functions or \"Done\" to stop",
+                                                     reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Done")]], 
+                                                     resize_keyboard=True))
+        
+        if "messages_to_remove" not in context.user_data:
+            context.user_data["messages_to_remove"] = []
+
+        context.user_data["messages_to_remove"].append(update.message.id)
+        context.user_data["messages_to_remove"].append(new_message.id)
+
+        return BotActions.CHECK_PASSWORD
+
+    async def checkPassword(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.message.from_user
+        logger.info("User %s trying password", user.first_name)
+        user_info = self.users[user.id]
+
+        if update.message.text == "Done":
+            context.user_data["messages_to_remove"].append(update.message.id)
+            return await self.doneAction(update, context)
+
+        hash = hashlib.new('sha256')
+        hash.update(update.message.text.encode())
+
+        if (hash.hexdigest() == ADMIN_HASH):
+            user_info.is_admin = True
+            new_message = await context.bot.send_message(user_info.chat_id, "Authorization done",
+                                                         reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Done")]], 
+                                                         resize_keyboard=True))
+            context.user_data["messages_to_remove"].append(update.message.id)
+            context.user_data["messages_to_remove"].append(new_message.id)
+            return BotActions.DONE_ACTION
+        
+        new_message = await context.bot.send_message(self.users[user.id].chat_id, "Incorrect password")
+        context.user_data["messages_to_remove"].append(new_message.id)
+
+        return await self.authorize(update, context)
+
+    async def exit(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.message.from_user
+        logger.info("User %s exit admin role", user.first_name)
+        
+        if user.id not in self.users:
+            return BotActions.MENU
+        
+        self.users[user.id].is_admin = False
 
         return await self.updateMenu(update, context)
 
