@@ -74,7 +74,7 @@ class TelegramBot:
                 BotActions.ADD_ITEM: [MessageHandler(filters.Regex("^Navigation$"), self.navigation_helper.addNavigation),
                                       MessageHandler(filters.Regex("^Article$"), self.article_helper.addArticle),
                                       MessageHandler(filters.Regex("^Quiz$"), self.quiz_helper.addQuizName),
-                                      MessageHandler(filters.Regex("^Back$"), self.updateMenu)],
+                                      MessageHandler(filters.Regex("^Back$"), self.doneAction)],
                 BotActions.ADD_NAVIGATION: [MessageHandler(filters.TEXT, self.navigation_helper.saveNavigation)],
                 BotActions.ADD_ARTICLE_NAME: [MessageHandler(filters.TEXT, self.article_helper.addArticleName)],
                 BotActions.SELECT_ARTICLE_CONTENT_TYPE: [MessageHandler(filters.TEXT, self.article_helper.articleSelectContentType)],
@@ -89,7 +89,7 @@ class TelegramBot:
                 BotActions.ADD_QUIZ_CONTENT: [MessageHandler(filters.TEXT, self.quiz_helper.addQuizContent)],
                 BotActions.SAVE_QUIZ: [MessageHandler(filters.Document.ALL, self.quiz_helper.saveQuiz)],
                 BotActions.DONE_ACTION: [MessageHandler(filters.Regex("^Done$"), self.doneAction)],
-                BotActions.REMOVE_ITEM: [MessageHandler(filters.Regex("^Back$"), self.updateMenu)],
+                BotActions.REMOVE_ITEM: [MessageHandler(filters.Regex("^Back$"), self.doneAction)],
                 BotActions.CHECK_PASSWORD: [MessageHandler(filters.TEXT, self.checkPassword)]
             },
             fallbacks=[CommandHandler("cancel", self.cancel)]
@@ -209,8 +209,9 @@ class TelegramBot:
         logger.info("User %s adding item", user.first_name)
 
         await self.clearPreviousMessages(update, context)
+        user_info = self.users[user.id]
 
-        if not self.users[user.id].is_admin:
+        if not user_info.is_admin:
             return await self.updateMenu(update, context)
 
         markup = ReplyKeyboardMarkup([[KeyboardButton("Navigation"),
@@ -219,7 +220,7 @@ class TelegramBot:
                                        KeyboardButton("Back")]],
                                        resize_keyboard=True)
 
-        message = await update.message.reply_text("Select new item type", reply_markup=markup)
+        message = await context.bot.send_message(user_info.chat_id, "Select new item type", reply_markup=markup)
         context.user_data["messages_to_remove"] = [message.id]
 
         return BotActions.ADD_ITEM
@@ -380,7 +381,7 @@ class NavigationHelper:
         user = update.message.from_user
         logger.info("User %s adding Navigation", user.first_name)
 
-        new_message = await update.message.reply_text("Enter navigation name", reply_markup=ReplyKeyboardRemove())
+        new_message = await context.bot.send_message(self.bot.users[user.id].chat_id, "Enter navigation name", reply_markup=ReplyKeyboardRemove())
         context.user_data["messages_to_remove"].append(new_message.id)
         context.user_data["messages_to_remove"].append(update.message.id)
 
@@ -415,7 +416,7 @@ class ArticleHelper:
         user = update.message.from_user
         logger.info("User %s adding new article", user.first_name)
 
-        new_message = await update.message.reply_text("Enter new article name", reply_markup=ReplyKeyboardRemove())
+        new_message = await context.bot.send_message(self.bot.users[user.id].chat_id, "Enter new article name", reply_markup=ReplyKeyboardRemove())
         context.user_data["messages_to_remove"].append(new_message.id)
         context.user_data["messages_to_remove"].append(update.message.id)
 
