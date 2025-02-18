@@ -6,7 +6,7 @@ import os.path
 from enum import Enum, auto
 from random import shuffle
 
-from telegram import Update, ReplyKeyboardRemove, KeyboardButton, ReplyKeyboardMarkup#, Poll
+from telegram import Update, ReplyKeyboardRemove, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -18,6 +18,8 @@ from telegram.ext import (
 
 from ContentNavigator import ContentNavigator, ArticleContent, ArticleContentType
 from UserInfo import UserInfo
+
+from DBManager import DBManager
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -52,6 +54,9 @@ class TelegramBot:
         self.users = {}
         self.navigator = ContentNavigator("bot_content.json")
 
+        self.db_manager = DBManager("db/bot_info.db")
+        self.db_manager.initDB()
+
         self.navigation_helper = NavigationHelper(self)
         self.article_helper = ArticleHelper(self)
         self.quiz_helper = QuizHelper(self)
@@ -63,6 +68,7 @@ class TelegramBot:
             states={
                 BotActions.MENU: [MessageHandler(filters.Regex("^Add$"), self.addItem),
                                   MessageHandler(filters.Regex("^Delete$"), self.removeItemStart),
+                                  MessageHandler(filters.Regex("^Quiz Results$"), self.quiz_helper.printQuizResults),
                                   CommandHandler("admin", self.authorize),
                                   CommandHandler("exit", self.exit)],
                 BotActions.ADD_ITEM: [MessageHandler(filters.Regex("^Navigation$"), self.navigation_helper.addNavigation),
@@ -130,7 +136,7 @@ class TelegramBot:
 
         if quiz_filter != "" and quiz_filter != "^()$":
             self.quiz_message_handler = MessageHandler(filters.Regex(quiz_filter), self.quiz_helper.startQuiz)
-            self.remove_quiz_message_handler = MessageHandler(filters.Regex(quiz_filter), self.removeItemFinish)
+            self.remove_quiz_message_handler = MessageHandler(filters.Regex(quiz_filter), self.removeQuizItem)
             self.conv_handler.states[BotActions.MENU].append(self.quiz_message_handler)
             self.conv_handler.states[BotActions.REMOVE_ITEM].append(self.remove_quiz_message_handler)
         else:
@@ -180,7 +186,9 @@ class TelegramBot:
                 buttons_markup.append(temp_list)
             temp_list.append(KeyboardButton(elem.label))
 
-        if len(user_info.history) > 0:
+        buttons_markup.append([KeyboardButton("Quiz Results")])
+
+        if user_info.history:
             buttons_markup.append([KeyboardButton("Back")])
 
         if user_info.is_admin:
@@ -245,6 +253,13 @@ class TelegramBot:
         context.user_data["messages_to_remove"] = [new_message.id]
 
         return BotActions.REMOVE_ITEM
+
+    async def removeQuizItem(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.message.from_user
+        logger.info("User %s removing quiz", user.first_name)
+
+        self.db_manager.deleteQuizFromDB(update.message.text)
+        return await self.removeItemFinish(update, context)
 
     async def removeItemFinish(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         user = update.message.from_user
@@ -678,13 +693,16 @@ class QuizHelper:
         user_info = self.bot.users[user.id]
 
         current_quiz = self.bot.navigator.getQuiz(user_info, update.message.text)
+        questions = copy.deepcopy(current_quiz.questions)
+        shuffle(questions)
         if current_quiz is None:
             return await self.bot.updateMenu(self, update)
         
         if "message_id" in context.user_data:
             await context.bot.delete_message(user_info.chat_id, context.user_data["message_id"])
 
-        context.user_data["quiz_questions"] = copy.deepcopy(current_quiz.questions)
+        context.user_data["quiz_name"] = current_quiz.label
+        context.user_data["quiz_questions"] = questions
         context.user_data["total_score"] = current_quiz.total_score
         context.user_data["current_score"] = 0.0
         context.user_data["messages_to_remove"] = []
@@ -712,17 +730,17 @@ class QuizHelper:
                 context.user_data["messages_to_remove"].append(message.id)
 
 
-        if len(context.user_data["quiz_questions"]) == 0:
+        if not context.user_data["quiz_questions"]:
+            score = str(context.user_data["current_score"]) + "/" + str(context.user_data["total_score"])
+            self.bot.db_manager.addUserResult(user.id, context.user_data["quiz_name"], score)
             new_message = await context.bot.send_message(user_info.chat_id,
-                                                          "Quiz finished.\nYour score is: " +
-                                                          str(context.user_data["current_score"]) + "/" +
-                                                          str(context.user_data["total_score"]),
+                                                          "Quiz finished.\nYour score is: " + score,
                                                           reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Done")]], 
                                                           resize_keyboard=True))
-            context.user_data["message_id"] = new_message.id
             context.user_data["messages_to_remove"].append(new_message.id)
             context.user_data["messages_to_remove"].append(update.message.id)
 
+            del context.user_data["quiz_name"]
             del context.user_data["quiz_questions"]
             del context.user_data["current_question"]
             del context.user_data["current_score"]
@@ -750,3 +768,30 @@ class QuizHelper:
         context.user_data["current_question"] = question
 
         return BotActions.ASK_QUESTION
+
+    async def printQuizResults(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.message.from_user
+        logger.info("User %s getting all quizes results", user.first_name)
+        user_info = self.bot.users[user.id]
+
+        results = self.bot.db_manager.getAllScores(user.id)
+
+        context.user_data["messages_to_remove"] = [update.message.id]
+
+        if results:
+            resp = ""
+            for result in results:
+                resp += result[0] + ": " + result[1] + "\n"
+            new_message = await context.bot.send_message(user_info.chat_id,
+                                                         resp,
+                                                         reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Done")]], 
+                                                         resize_keyboard=True))
+            context.user_data["messages_to_remove"].append(new_message.id)
+        else:
+            new_message = await context.bot.send_message(user_info.chat_id,
+                                                         "There are no finished quizzes",
+                                                         reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Done")]], 
+                                                         resize_keyboard=True))
+            context.user_data["messages_to_remove"].append(new_message.id)
+
+        return BotActions.DONE_ACTION
